@@ -1,5 +1,8 @@
 import os
 import random
+from data.image import Image
+import numpy
+from shutil import copy, rmtree
 
 
 def split(path, train, validation, test=None):
@@ -19,8 +22,8 @@ def split(path, train, validation, test=None):
     :param validation: The fraction of the data that we want to use for validation and hyper-parameter estimation 
     :param test: The fraction of the data that we want to use for final testing
         (Optional) if valid training and validation fractions are given, this will be calculated
-    :return: A tuple (train_data, validation_data, test_data). Each element of the tuple is a dict. The dict maps the 
-        class names to the list of paths to images that belong to that class
+    :return: A 3-tuple (train_data, validation_data, test_data). Each element of the 3-tuple is a 2-tuple. This is a 
+        pair of (image_paths, labels)
     """
     if not test:
         if train + validation > 1.0:
@@ -35,16 +38,75 @@ def split(path, train, validation, test=None):
     if not path:
         raise ValueError("Path to input dataset is invalid")
 
-    train_data = {}
-    validation_data = {}
-    test_data = {}
+    train_data, train_labels = [], []
+    validation_data, validation_labels = [], []
+    test_data, test_labels = [], []
     for item in os.listdir(path):
-        filelist = [file for file in os.listdir(os.path.join(path, item))
+        if os.path.isfile(os.path.join(path, item)):
+            continue
+
+        filelist = [os.path.join(path, item, file) for file in os.listdir(os.path.join(path, item))
                     if os.path.isfile(os.path.join(path, item, file))]
         random.shuffle(filelist)
         size = len(filelist)
-        train_data[item], validation_data[item], test_data[item] = \
-            filelist[:int(size * train)], filelist[int(size * train):int(size * (train + validation))], \
-            filelist[int(size * (train + validation)):]
 
-    return train_data, validation_data, test_data
+        temp = filelist[:int(size * train)]
+        train_data.extend(temp)
+        train_labels.extend([item] * len(temp))
+
+        temp = filelist[int(size * train):int(size * (train + validation))]
+        validation_data.extend(temp)
+        validation_labels.extend([item] * len(temp))
+
+        temp = filelist[int(size * (train + validation)):]
+        test_data.extend(temp)
+        test_labels.extend([item] * len(temp))
+
+    return (train_data, train_labels), (validation_data, validation_labels), (test_data, test_labels)
+
+
+def generate_and_save_features(img_paths, feature_func=Image.HoG, save_file=None, force_generate=False):
+    """
+    Generate image features and save to csv
+    :param feature_func: Feature function from the Image class
+    :param img_paths: List of paths to images
+    :param save_file: File to save the features in
+    :param force_generate: Generate the image features even if a saved file already exists
+    :return: 
+    """
+    if not force_generate and os.path.exists(save_file):
+        return numpy.genfromtxt(save_file, delimiter=',', defaultfmt="%d")
+
+    features = [feature_func(Image(x, as_grey=True)) for x in img_paths]
+    if save_file:
+        numpy.savetxt(save_file, features, fmt="%d", delimiter=',')
+    return features
+
+
+def generate_toy_dataset(origin, destination, num=50, force_generate=False):
+    if os.path.exists(destination) and not force_generate:
+        return
+
+    if os.path.exists(destination):
+        rmtree(destination)
+
+    os.mkdir(destination)
+    for item in os.listdir(origin):
+        if os.path.isfile(os.path.join(origin, item)):
+            continue
+
+        os.mkdir(os.path.join(destination, item))
+
+        filelist = [os.path.join(origin, item, file) for file in os.listdir(os.path.join(origin, item))
+                    if os.path.isfile(os.path.join(origin, item, file))]
+        random.shuffle(filelist)
+        size = len(filelist)
+
+        for i in range(min(size, num)):
+            copy(os.path.join(origin, item, filelist[i]), os.path.join(destination, item))
+
+
+def accuracy(values, expected):
+    if len(values) != len(expected):
+        raise ValueError("Sizes of two lists must be same")
+    return numpy.sum(numpy.array(values) == numpy.array(expected)) / len(values)
